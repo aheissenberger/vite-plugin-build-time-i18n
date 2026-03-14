@@ -2,12 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import MagicString from "magic-string";
 import type { Plugin } from "vite";
-import { fileURLToPath } from "node:url";
 
 const VIRTUAL_HELPER_ID = "virtual:build-time-i18n-helper";
 const RESOLVED_VIRTUAL_HELPER_ID = `\0${VIRTUAL_HELPER_ID}`;
-const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_LOCALES_DIR = path.resolve(PLUGIN_DIR, "..", "i18n", "locales");
+const DEFAULT_LOCALES_DIR = path.resolve(process.cwd(), "i18n", "locales");
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 

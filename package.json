@@ -10,6 +10,14 @@
     "build-time",
     "translation"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aheissenberger/vite-plugin-build-time-i18n.git"
+  },
+  "homepage": "https://github.com/aheissenberger/vite-plugin-build-time-i18n",
+  "bugs": {
+    "url": "https://github.com/aheissenberger/vite-plugin-build-time-i18n/issues"
+  },
   "author": "Andreas Heissenberger <andreas@heissenberger.at>",
   "license": "MIT",
   "type": "module",
@@ -32,6 +40,9 @@
   },
   "peerDependencies": {
     "vite": "^8.0.0"
+  },
+  "dependencies": {
+    "magic-string": "^0.30.21"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

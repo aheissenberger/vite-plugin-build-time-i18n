@@ -158,7 +158,7 @@ Active locale code. The plugin reads `<localesDir>/<locale>.json`.
 
 Directory containing locale JSON files.
 
-Default: the package's bundled `i18n/locales` directory.
+Default: `<projectRoot>/i18n/locales` (resolved from `process.cwd()`).
 
 ### `include`
 
