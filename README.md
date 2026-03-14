@@ -147,6 +147,7 @@ type BuildTimeI18nPluginOptions = {
   functionName?: string;
   strictMissing?: boolean;
   failOnDynamicKeys?: boolean;
+  includeEnvironmentLabelInWarnings?: boolean;
 };
 ```
 
@@ -158,7 +159,10 @@ Active locale code. The plugin reads `<localesDir>/<locale>.json`.
 
 Directory containing locale JSON files.
 
-Default: `<projectRoot>/i18n/locales` (resolved from `process.cwd()`).
+Default candidates (first existing wins, resolved from `process.cwd()`):
+
+- `<projectRoot>/locales`
+- `<projectRoot>/i18n/locales`
 
 ### `include`
 
@@ -167,7 +171,7 @@ Regular expression used to choose which files run through the transform hook.
 Default:
 
 ```ts
-/\.[cm]?[jt]sx?$/
+/\.[cm]?[jt]sx?$/;
 ```
 
 ### `functionName`
@@ -202,6 +206,13 @@ Controls how non-literal translation keys are handled.
 
 - `true` (default): fail the build
 - `false`: warn and leave the call non-precompiled
+
+### `includeEnvironmentLabelInWarnings`
+
+Controls whether diagnostics include the current Vite environment label.
+
+- `true` (default): include labels such as `[client]`, `[ssr]`, or `[unknown]`
+- `false`: use plain `[build-time-i18n]` warnings without environment labels
 
 ## Supported message syntax
 
@@ -261,6 +272,15 @@ Rules:
 
 The plugin reports diagnostics with the prefix `[build-time-i18n]`.
 
+By default, warnings include an environment label, for example:
+
+- `[build-time-i18n] [client] ...`
+- `[build-time-i18n] [ssr] ...`
+
+Unused-key diagnostics are environment-scoped. A key may be used in one environment and unused in another.
+
+When locale JSON cannot be parsed, errors include the file path and parser details.
+
 It can report:
 
 - missing translation keys
@@ -275,6 +295,25 @@ It can report:
 - The first argument must be a string literal to be precompiled.
 - The plugin applies only to Vite build mode.
 - Locale files must be valid JSON and must contain a top-level object.
+
+## Authoring Guardrails For AI Agents
+
+This repository includes agent guidance and a validator to keep translation usage compatible with build-time precompilation.
+
+- Skill: `.github/skills/build-time-i18n-authoring/SKILL.md`
+- Instruction profile: `.github/instructions/build-time-i18n-authoring.instructions.md`
+- Validator command: `npm run validate:i18n` (runs with `--allow-missing-locales` in this repository)
+
+The validator checks:
+
+- locale JSON parse and shape issues
+- precompile compatibility using plugin build-time checks
+- key parity across locale files
+- placeholder mismatch warnings across locales
+- dynamic translation key calls in non-test source files
+- member/computed translation calls in non-test source files that are not rewritten
+
+Compared to established runtime translators, this plugin intentionally trades runtime flexibility for build-time replacement and diagnostics. In practice, dynamic key resolution and runtime locale behavior are more limited.
 
 ## Advanced
 
@@ -292,5 +331,6 @@ That helper uses native `Intl.PluralRules`, `Intl.NumberFormat`, and
 ```bash
 npm install
 npm run typecheck
+npm run validate:i18n
 npm test
 ```

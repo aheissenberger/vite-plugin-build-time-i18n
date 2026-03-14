@@ -5,7 +5,6 @@ import type { Plugin } from "vite";
 
 const VIRTUAL_HELPER_ID = "virtual:build-time-i18n-helper";
 const RESOLVED_VIRTUAL_HELPER_ID = `\0${VIRTUAL_HELPER_ID}`;
-const DEFAULT_LOCALES_DIR = path.resolve(process.cwd(), "i18n", "locales");
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -18,6 +17,7 @@ type BuildTimeI18nPluginOptions = {
   functionName?: string;
   strictMissing?: boolean;
   failOnDynamicKeys?: boolean;
+  includeEnvironmentLabelInWarnings?: boolean;
 };
 
 type CompiledCatalogEntry = {
@@ -99,14 +99,15 @@ export function buildTimeI18nPlugin(options: BuildTimeI18nPluginOptions): Plugin
   const functionName = options.functionName ?? "t";
   const strictMissing = options.strictMissing ?? true;
   const failOnDynamicKeys = options.failOnDynamicKeys ?? true;
+  const includeEnvironmentLabelInWarnings = options.includeEnvironmentLabelInWarnings ?? true;
 
   let localeMap = new Map<string, string>();
   let compiledCatalog = new Map<string, CompiledCatalogEntry>();
   let localeFilePath = "";
-  const usedKeys = new Set<string>();
-  const missingKeys = new Set<string>();
-  let dynamicCallCount = 0;
-  let auditReported = false;
+  const usedKeysByEnvironment = new Map<string, Set<string>>();
+  const missingKeysByEnvironment = new Map<string, Set<string>>();
+  const dynamicCallCountByEnvironment = new Map<string, number>();
+  const auditReportedForEnvironment = new Set<string>();
 
   return [
     {
@@ -116,10 +117,10 @@ export function buildTimeI18nPlugin(options: BuildTimeI18nPluginOptions): Plugin
       buildStart() {
         localeFilePath = resolveLocaleFilePath(options.locale, options.localesDir);
         this.addWatchFile(localeFilePath);
-        usedKeys.clear();
-        missingKeys.clear();
-        dynamicCallCount = 0;
-        auditReported = false;
+        usedKeysByEnvironment.clear();
+        missingKeysByEnvironment.clear();
+        dynamicCallCountByEnvironment.clear();
+        auditReportedForEnvironment.clear();
 
         const catalog = readJsonFile(localeFilePath);
         localeMap = flattenSectionedMessages(catalog);
@@ -165,13 +166,18 @@ export function buildTimeI18nPlugin(options: BuildTimeI18nPluginOptions): Plugin
           code: string,
           id: string,
         ) {
+          const environmentLabel = getEnvironmentLabel(this);
+
           if (!mightContainTranslationCalls(code, functionName)) {
             return null;
           }
 
           const ast = this.parse(code, getParserOptionsForId(id));
           const analysis = analyzeTranslationCalls(ast, functionName);
-          dynamicCallCount += analysis.dynamicCalls;
+          if (analysis.dynamicCalls > 0) {
+            const current = dynamicCallCountByEnvironment.get(environmentLabel) ?? 0;
+            dynamicCallCountByEnvironment.set(environmentLabel, current + analysis.dynamicCalls);
+          }
 
           if (analysis.dynamicCalls > 0) {
             const message = `[build-time-i18n] found ${analysis.dynamicCalls} dynamic translation call(s) in ${normalizeForLog(id)}. Use string literal keys for compile-time replacement.`;
@@ -188,6 +194,8 @@ export function buildTimeI18nPlugin(options: BuildTimeI18nPluginOptions): Plugin
 
           const replacements: Replacement[] = [];
           let helperIsNeeded = false;
+          const usedKeys = getOrCreateSet(usedKeysByEnvironment, environmentLabel);
+          const missingKeys = getOrCreateSet(missingKeysByEnvironment, environmentLabel);
 
           for (const callSite of analysis.literalCallSites) {
             usedKeys.add(callSite.key);
@@ -231,40 +239,71 @@ export function buildTimeI18nPlugin(options: BuildTimeI18nPluginOptions): Plugin
         },
       },
       generateBundle() {
-        const environmentName = (this as { environment?: { name?: string } }).environment?.name;
-        if (environmentName && environmentName !== "client") {
+        const environmentLabel = getEnvironmentLabel(this);
+        const warningPrefix = createWarningPrefix(
+          environmentLabel,
+          includeEnvironmentLabelInWarnings,
+        );
+
+        if (auditReportedForEnvironment.has(environmentLabel)) {
           return;
         }
 
-        if (auditReported) {
-          return;
-        }
+        auditReportedForEnvironment.add(environmentLabel);
 
-        auditReported = true;
+        const missingKeys = missingKeysByEnvironment.get(environmentLabel) ?? new Set<string>();
+        const usedKeys = usedKeysByEnvironment.get(environmentLabel) ?? new Set<string>();
+        const dynamicCallCount = dynamicCallCountByEnvironment.get(environmentLabel) ?? 0;
 
         if (missingKeys.size > 0) {
-          const missing = [...missingKeys].sort();
-          const message = `[build-time-i18n] missing translation keys for locale ${options.locale}: ${missing.join(", ")}`;
+          const missing = Array.from(missingKeys).sort();
+          const message = `${warningPrefix} missing translation keys for locale ${options.locale}: ${missing.join(", ")}`;
           this.warn(message);
         }
 
-        const unusedKeys = [...localeMap.keys()].filter((key) => !usedKeys.has(key)).sort();
+        const unusedKeys = Array.from(localeMap.keys())
+          .filter((key) => !usedKeys.has(key))
+          .sort();
         if (unusedKeys.length > 0) {
           const preview = unusedKeys.slice(0, 10).join(", ");
           const suffix = unusedKeys.length > 10 ? ` (+${unusedKeys.length - 10} more)` : "";
           this.warn(
-            `[build-time-i18n] ${unusedKeys.length} unused translation keys in ${normalizeForLog(localeFilePath)}: ${preview}${suffix}`,
+            `${warningPrefix} ${unusedKeys.length} unused translation keys in ${normalizeForLog(localeFilePath)} (environment-scoped audit): ${preview}${suffix}`,
           );
         }
 
         if (dynamicCallCount > 0) {
           this.warn(
-            `[build-time-i18n] encountered ${dynamicCallCount} dynamic translation call(s) that cannot be precompiled.`,
+            `${warningPrefix} encountered ${dynamicCallCount} dynamic translation call(s) that cannot be precompiled.`,
           );
         }
       },
     },
   ];
+}
+
+function createWarningPrefix(environmentLabel: string, includeEnvironmentLabelInWarnings: boolean) {
+  if (!includeEnvironmentLabelInWarnings) {
+    return "[build-time-i18n]";
+  }
+
+  return `[build-time-i18n] [${environmentLabel}]`;
+}
+
+function getEnvironmentLabel(value: unknown): string {
+  const name = (value as { environment?: { name?: string } } | undefined)?.environment?.name;
+  return typeof name === "string" && name.length > 0 ? name : "unknown";
+}
+
+function getOrCreateSet(map: Map<string, Set<string>>, key: string): Set<string> {
+  const existing = map.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const created = new Set<string>();
+  map.set(key, created);
+  return created;
 }
 
 type BuildCallReplacementInput = {
@@ -428,6 +467,10 @@ function walkAst(node: unknown, visit: (value: unknown) => void) {
   visit(node);
 
   for (const [key, value] of Object.entries(node)) {
+    if (!value || (typeof value !== "object" && !Array.isArray(value))) {
+      continue;
+    }
+
     if (
       key === "type" ||
       key === "start" ||
@@ -436,7 +479,6 @@ function walkAst(node: unknown, visit: (value: unknown) => void) {
       key === "range" ||
       key === "raw" ||
       key === "name" ||
-      key === "value" ||
       key === "operator" ||
       key === "kind" ||
       key === "directive" ||
@@ -460,7 +502,7 @@ function isAstNode(value: unknown): value is { type: string } {
 function precompileCatalog(catalog: Map<string, string>) {
   const compiled = new Map<string, CompiledCatalogEntry>();
 
-  for (const [key, raw] of catalog.entries()) {
+  for (const [key, raw] of Array.from(catalog.entries())) {
     const compiledMessage = compileMessage(raw, false, `key ${key}`);
     validateCompiledMessage(compiledMessage, key);
     compiled.set(key, {
@@ -558,13 +600,40 @@ function findDirectiveAwareInsertionIndex(code: string, ast: unknown): number {
 }
 
 function resolveLocaleFilePath(locale: string, localesDir: string | undefined) {
-  const baseDir = localesDir ?? DEFAULT_LOCALES_DIR;
-  return path.join(baseDir, `${locale}.json`);
+  const candidateDirs = localesDir ? [path.resolve(localesDir)] : getDefaultLocaleDirCandidates();
+
+  for (const dir of candidateDirs) {
+    const candidateFilePath = path.join(dir, `${locale}.json`);
+    if (fs.existsSync(candidateFilePath)) {
+      return candidateFilePath;
+    }
+  }
+
+  const checkedPaths = candidateDirs
+    .map((dir) => normalizeForLog(path.join(dir, `${locale}.json`)))
+    .join(", ");
+
+  throw new Error(
+    `[build-time-i18n] Locale file for locale ${locale} was not found. Checked: ${checkedPaths}. Set options.localesDir to the directory that contains locale JSON files.`,
+  );
+}
+
+function getDefaultLocaleDirCandidates() {
+  return [path.resolve(process.cwd(), "locales"), path.resolve(process.cwd(), "i18n", "locales")];
 }
 
 function readJsonFile(filePath: string): JsonObject {
   const raw = fs.readFileSync(filePath, "utf8");
-  const data = JSON.parse(raw) as JsonValue;
+  let data: JsonValue;
+
+  try {
+    data = JSON.parse(raw) as JsonValue;
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `[build-time-i18n] failed to parse JSON in ${normalizeForLog(filePath)}: ${details}`,
+    );
+  }
 
   if (!isJsonObject(data)) {
     throw new Error(`Expected top-level JSON object in ${normalizeForLog(filePath)}`);
@@ -604,7 +673,13 @@ function isJsonObject(value: unknown): value is JsonObject {
 }
 
 function mightContainTranslationCalls(source: string, functionName: string) {
-  return source.includes(`${functionName}(`) || source.includes(`.${functionName}(`);
+  const escapedFunctionName = escapeRegExp(functionName);
+  const callSitePattern = new RegExp(`(^|[^\\w$.])${escapedFunctionName}\\s*\\(`);
+  return callSitePattern.test(source);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getParserOptionsForId(id: string): { lang: ParserLang } {

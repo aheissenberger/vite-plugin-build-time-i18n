@@ -278,17 +278,11 @@ describe("vite-plugin-build-time-i18n coverage", () => {
             "=0": { type: "message", parts: [{ type: "text", value: "none" }] },
             one: {
               type: "message",
-              parts: [
-                { type: "pound" },
-                { type: "text", value: " item" },
-              ],
+              parts: [{ type: "pound" }, { type: "text", value: " item" }],
             },
             other: {
               type: "message",
-              parts: [
-                { type: "pound" },
-                { type: "text", value: " items" },
-              ],
+              parts: [{ type: "pound" }, { type: "text", value: " items" }],
             },
           },
         },
@@ -333,6 +327,11 @@ describe("vite-plugin-build-time-i18n coverage", () => {
   });
 
   it("rejects invalid top-level JSON and non-string leaf values", () => {
+    const invalidJsonPlugin = getPlugin({ locale: "de", localesDir: createLocalesDir('{"app":') });
+    expect(() =>
+      runBuildStart(getBuildStart(invalidJsonPlugin), createBuildContext()),
+    ).toThrowError(/failed to parse JSON in .*\/de\.json/i);
+
     const scalarPlugin = getPlugin({ locale: "de", localesDir: createLocalesDir('"bad"') });
     expect(() => runBuildStart(getBuildStart(scalarPlugin), createBuildContext())).toThrowError(
       /Expected top-level JSON object/i,
@@ -367,6 +366,31 @@ describe("vite-plugin-build-time-i18n coverage", () => {
       } as any,
       "const value = 1;",
       "src/no-translation.ts",
+    );
+
+    expect(transformed).toBeNull();
+  });
+
+  it("does not parse member-expression-only prefilter matches", () => {
+    const fixtureDir = createLocalesDir({ app: { plain: "Hello" } });
+    const plugin = getPlugin({ locale: "de", localesDir: fixtureDir });
+    runBuildStart(getBuildStart(plugin), createBuildContext());
+
+    const transform = getTransformHandler(plugin);
+    const transformed = transform.call(
+      {
+        parse() {
+          throw new Error("parse should not be called");
+        },
+        warn() {
+          // noop
+        },
+        error(message: string) {
+          throw new Error(message);
+        },
+      } as any,
+      'const message = i18n.t("app.plain");',
+      "src/member-only.ts",
     );
 
     expect(transformed).toBeNull();
@@ -592,8 +616,8 @@ describe("vite-plugin-build-time-i18n coverage", () => {
     const source = 'const a = t("app.missing"); const k = getKey(); const b = t(k);';
     const literalStart = source.indexOf('t("app.missing")');
     const literalEnd = literalStart + 't("app.missing")'.length;
-    const dynamicStart = source.indexOf('t(k)');
-    const dynamicEnd = dynamicStart + 't(k)'.length;
+    const dynamicStart = source.indexOf("t(k)");
+    const dynamicEnd = dynamicStart + "t(k)".length;
     const warnings: string[] = [];
 
     transform.call(
@@ -657,8 +681,8 @@ describe("vite-plugin-build-time-i18n coverage", () => {
     expect(warnings).toHaveLength(repeatedWarnings);
   });
 
-  it("skips bundle audit outside the client environment", () => {
-    const fixtureDir = createLocalesDir({ app: { known: "Known" } });
+  it("labels bundle audit warnings with the current environment", () => {
+    const fixtureDir = createLocalesDir({ app: { known: "Known", unused: "Unused" } });
     const plugin = getPlugin({ locale: "de", localesDir: fixtureDir, strictMissing: false });
     runBuildStart(getBuildStart(plugin), createBuildContext());
 
@@ -670,7 +694,130 @@ describe("vite-plugin-build-time-i18n coverage", () => {
       },
     });
 
-    expect(warnings).toEqual([]);
+    expect(warnings.some((message) => message.includes("[ssr]"))).toBe(true);
+    expect(warnings.some((message) => message.includes("environment-scoped audit"))).toBe(true);
+  });
+
+  it("can disable environment labels in diagnostics", () => {
+    const fixtureDir = createLocalesDir({ app: { known: "Known", unused: "Unused" } });
+    const plugin = getPlugin({
+      locale: "de",
+      localesDir: fixtureDir,
+      strictMissing: false,
+      includeEnvironmentLabelInWarnings: false,
+    });
+    runBuildStart(getBuildStart(plugin), createBuildContext());
+
+    const warnings: string[] = [];
+    runGenerateBundle(getGenerateBundle(plugin), {
+      environment: { name: "ssr" },
+      warn(message: string) {
+        warnings.push(message);
+      },
+    });
+
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.every((message) => message.startsWith("[build-time-i18n]"))).toBe(true);
+    expect(warnings.some((message) => message.includes("[ssr]"))).toBe(false);
+  });
+
+  it("tracks used keys per environment for unused-key diagnostics", () => {
+    const fixtureDir = createLocalesDir({ app: { known: "Known" } });
+    const plugin = getPlugin({
+      locale: "de",
+      localesDir: fixtureDir,
+      strictMissing: false,
+      failOnDynamicKeys: false,
+    });
+    runBuildStart(getBuildStart(plugin), createBuildContext());
+
+    const transform = getTransformHandler(plugin);
+    const source = 'const message = t("app.known");';
+    const literalStart = source.indexOf('t("app.known")');
+    const literalEnd = literalStart + 't("app.known")'.length;
+
+    transform.call(
+      {
+        environment: { name: "client" },
+        parse() {
+          return {
+            type: "Program",
+            body: [
+              {
+                type: "ExpressionStatement",
+                expression: {
+                  type: "CallExpression",
+                  start: literalStart,
+                  end: literalEnd,
+                  callee: { type: "Identifier", name: "t" },
+                  arguments: [{ type: "Literal", value: "app.known" }],
+                },
+              },
+            ],
+          };
+        },
+        warn() {
+          // noop
+        },
+        error(message: string) {
+          throw new Error(message);
+        },
+      } as any,
+      source,
+      "src/per-env.ts",
+    );
+
+    const warnings: string[] = [];
+    const generateBundle = getGenerateBundle(plugin);
+    runGenerateBundle(generateBundle, {
+      environment: { name: "client" },
+      warn(message: string) {
+        warnings.push(message);
+      },
+    });
+
+    runGenerateBundle(generateBundle, {
+      environment: { name: "ssr" },
+      warn(message: string) {
+        warnings.push(message);
+      },
+    });
+
+    const clientWarnings = warnings.filter((message) => message.includes("[client]"));
+    const ssrWarnings = warnings.filter((message) => message.includes("[ssr]"));
+
+    expect(clientWarnings.some((message) => message.includes("unused translation keys"))).toBe(
+      false,
+    );
+    expect(ssrWarnings.some((message) => message.includes("unused translation keys"))).toBe(true);
+  });
+
+  it("resolves default locale files from local candidates and reports checked paths when missing", () => {
+    const originalCwd = process.cwd();
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "i18n-defaults-"));
+
+    try {
+      const localesDir = path.join(fixtureRoot, "locales");
+      fs.mkdirSync(localesDir, { recursive: true });
+      fs.writeFileSync(path.join(localesDir, "de.json"), JSON.stringify({ app: { ok: "OK" } }));
+
+      process.chdir(fixtureRoot);
+
+      const plugin = getPlugin({ locale: "de" });
+      const context = createBuildContext();
+      runBuildStart(getBuildStart(plugin), context);
+
+      expect(fs.realpathSync(context.watchedFiles[0])).toBe(
+        fs.realpathSync(path.join(localesDir, "de.json")),
+      );
+
+      const missingPlugin = getPlugin({ locale: "fr" });
+      expect(() => runBuildStart(getBuildStart(missingPlugin), createBuildContext())).toThrowError(
+        /Checked: .*\/locales\/fr\.json, .*\/i18n\/locales\/fr\.json/i,
+      );
+    } finally {
+      process.chdir(originalCwd);
+    }
   });
 
   it("handles malformed ICU control options and invalid date styles", () => {
@@ -682,9 +829,9 @@ describe("vite-plugin-build-time-i18n coverage", () => {
         },
       }),
     });
-    expect(() =>
-      runBuildStart(getBuildStart(malformedPlugin), createBuildContext()),
-    ).toThrowError(/missing required 'other' option/i);
+    expect(() => runBuildStart(getBuildStart(malformedPlugin), createBuildContext())).toThrowError(
+      /missing required 'other' option/i,
+    );
 
     const emptyStylePlugin = getPlugin({
       locale: "de",
@@ -695,7 +842,9 @@ describe("vite-plugin-build-time-i18n coverage", () => {
         },
       }),
     });
-    expect(() => runBuildStart(getBuildStart(emptyStylePlugin), createBuildContext())).not.toThrow();
+    expect(() =>
+      runBuildStart(getBuildStart(emptyStylePlugin), createBuildContext()),
+    ).not.toThrow();
 
     const invalidDatePlugin = getPlugin({
       locale: "de",

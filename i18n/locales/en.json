@@ -1,0 +1,8 @@
+{
+  "app": {
+    "page": {
+      "title": "Home",
+      "priorityCount": "{count, plural, one {# priority} other {# priorities}}"
+    }
+  }
+}

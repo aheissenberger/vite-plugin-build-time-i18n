@@ -1,45 +1,40 @@
 {
   "name": "vite-plugin-build-time-i18n",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vite plugin for build-time i18n with static translation replacement and ICU message precompilation.",
   "keywords": [
-    "vite",
-    "vite-plugin",
+    "build-time",
     "i18n",
     "internationalization",
-    "build-time",
-    "translation"
+    "translation",
+    "vite",
+    "vite-plugin"
   ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/aheissenberger/vite-plugin-build-time-i18n.git"
-  },
   "homepage": "https://github.com/aheissenberger/vite-plugin-build-time-i18n",
   "bugs": {
     "url": "https://github.com/aheissenberger/vite-plugin-build-time-i18n/issues"
   },
-  "author": "Andreas Heissenberger <andreas@heissenberger.at>",
   "license": "MIT",
-  "type": "module",
-  "engines": {
-    "node": ">=25"
+  "author": "Andreas Heissenberger <andreas@heissenberger.at>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aheissenberger/vite-plugin-build-time-i18n.git"
   },
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "types": "./src/index.ts",
   "files": [
     "src/index.ts"
   ],
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "dev": "node src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "validate:i18n": "node src/validate-i18n-authoring.ts --allow-missing-locales",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
-  },
-  "peerDependencies": {
-    "vite": "^8.0.0"
   },
   "dependencies": {
     "magic-string": "^0.30.21"
@@ -50,5 +45,11 @@
     "typescript": "^5.9.2",
     "vite": "^8.0.0",
     "vitest": "^4.1.0"
+  },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=25"
   }
 }

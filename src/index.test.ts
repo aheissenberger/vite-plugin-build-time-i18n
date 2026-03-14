@@ -422,4 +422,132 @@ describe("vite-plugin-build-time-i18n internals", () => {
       transformed?.code.match(/virtual:build-time-i18n-helper/g)?.length ?? 0;
     expect(helperImportMatches).toBe(1);
   });
+
+  it("rewrites translation calls nested under object and JSX value fields", () => {
+    const fixtureDir = createLocalesDir({
+      app: {
+        route: {
+          modeLabel: "Routenmodus",
+        },
+      },
+    });
+
+    const [plugin] = buildTimeI18nPlugin({ locale: "de", localesDir: fixtureDir });
+    if (!plugin) {
+      throw new Error("Plugin instance is required for test");
+    }
+
+    const buildStart = plugin.buildStart;
+    if (typeof buildStart !== "function") {
+      throw new Error("buildStart hook is required for test");
+    }
+
+    const transformHook = plugin.transform;
+    if (
+      !transformHook ||
+      typeof transformHook !== "object" ||
+      typeof transformHook.handler !== "function"
+    ) {
+      throw new Error("transform handler hook is required for test");
+    }
+
+    runBuildStart(buildStart, {
+      addWatchFile() {
+        // noop
+      },
+      info() {
+        // noop
+      },
+    });
+
+    const objectSource = 'const model = { label: t("app.route.modeLabel") };\n';
+    const objectCallStart = objectSource.indexOf('t("app.route.modeLabel")');
+    const objectCallEnd = objectCallStart + 't("app.route.modeLabel")'.length;
+
+    const transformedObject = transformHook.handler.call(
+      {
+        parse() {
+          return {
+            type: "Program",
+            body: [
+              {
+                type: "ExpressionStatement",
+                expression: {
+                  type: "ObjectExpression",
+                  properties: [
+                    {
+                      type: "Property",
+                      key: { type: "Identifier", name: "label" },
+                      value: {
+                        type: "CallExpression",
+                        start: objectCallStart,
+                        end: objectCallEnd,
+                        callee: { type: "Identifier", name: "t" },
+                        arguments: [{ type: "Literal", value: "app.route.modeLabel" }],
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+        },
+        warn() {
+          // noop
+        },
+      } as any,
+      objectSource,
+      "src/object-value.ts",
+    ) as { code: string } | null;
+
+    expect(transformedObject?.code).toContain('label: "Routenmodus"');
+
+    const jsxSource = 'const node = <Item title={t("app.route.modeLabel")} />;\n';
+    const jsxCallStart = jsxSource.indexOf('t("app.route.modeLabel")');
+    const jsxCallEnd = jsxCallStart + 't("app.route.modeLabel")'.length;
+
+    const transformedJsx = transformHook.handler.call(
+      {
+        parse() {
+          return {
+            type: "Program",
+            body: [
+              {
+                type: "ExpressionStatement",
+                expression: {
+                  type: "JSXElement",
+                  openingElement: {
+                    type: "JSXOpeningElement",
+                    attributes: [
+                      {
+                        type: "JSXAttribute",
+                        name: { type: "JSXIdentifier", name: "title" },
+                        value: {
+                          type: "JSXExpressionContainer",
+                          expression: {
+                            type: "CallExpression",
+                            start: jsxCallStart,
+                            end: jsxCallEnd,
+                            callee: { type: "Identifier", name: "t" },
+                            arguments: [{ type: "Literal", value: "app.route.modeLabel" }],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          };
+        },
+        warn() {
+          // noop
+        },
+      } as any,
+      jsxSource,
+      "src/jsx-value.tsx",
+    ) as { code: string } | null;
+
+    expect(transformedJsx?.code).toContain('title={"Routenmodus"}');
+  });
 });
