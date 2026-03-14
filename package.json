@@ -1,0 +1,43 @@
+{
+  "name": "vite-plugin-build-time-i18n",
+  "version": "0.1.0",
+  "description": "Vite plugin for build-time i18n with static translation replacement and ICU message precompilation.",
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "i18n",
+    "internationalization",
+    "build-time",
+    "translation"
+  ],
+  "author": "Andreas Heissenberger <andreas@heissenberger.at>",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=25"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "files": [
+    "src/index.ts"
+  ],
+  "scripts": {
+    "dev": "node src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "vite": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.0",
+    "typescript": "^5.9.2",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.0"
+  }
+}
